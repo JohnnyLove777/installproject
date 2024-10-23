@@ -42,26 +42,6 @@ function solicitar_informacoes {
         fi
     done
 
-    # Solicitar email para configurar o provider do Chatwoot
-    while true; do
-        read -p "Digite o e-mail do remetente para o Chatwoot (ex: seuemail@seudominio.com): " EMAIL_CHATWOOT
-        if [[ $EMAIL_CHATWOOT =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-            break
-        else
-            echo "Por favor, insira um endereço de e-mail válido sem espaços."
-        fi
-    done
-
-    # Solicitar a API Key do SendGrid
-    while true; do
-        read -p "Digite a SendGrid API Key: " SENDGRID_API_KEY
-        if [[ ! -z "$SENDGRID_API_KEY" ]]; then
-            break
-        else
-            echo "A API Key não pode estar vazia."
-        fi
-    done
-
     # Geração da chave de autenticação segura
     AUTH_KEY=$(openssl rand -hex 16)
     echo "Sua chave de autenticação é: $AUTH_KEY"
@@ -78,15 +58,13 @@ function solicitar_informacoes {
     # Armazena as informações
     EMAIL_GMAIL_INPUT=$EMAIL_GMAIL
     SENHA_APP_GMAIL_INPUT=$SENHA_APP_GMAIL
-    EMAIL_CHATWOOT_INPUT=$EMAIL_CHATWOOT
-    SENDGRID_API_KEY_INPUT=$SENDGRID_API_KEY
     DOMINIO_INPUT=$DOMINIO
     IP_VPS_INPUT=$IP_VPS
     AUTH_KEY_INPUT=$AUTH_KEY
 }
 
-# Função para instalar Evolution API, JohnnyZap, JohnnyDash, Typebot e Chatwoot
-function instalar_sistemas {
+# Função para instalar Evolution API, JohnnyZap, JohnnyDash e Typebot
+function instalar_evolution_johnnyzap_typebot {
     sudo apt update
     sudo apt upgrade -y
     sudo apt-add-repository universe
@@ -155,19 +133,13 @@ server {
 }
 EOF
 
-    # Configuração para JohnnyDash na porta 3031
+    # Configuração para JohnnyDash
     cat <<EOF > /etc/nginx/sites-available/johnnydash
 server {
     server_name johnnydash.$DOMINIO_INPUT;
     location / {
         proxy_pass http://127.0.0.1:3031;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_cache_bypass \$http_upgrade;
     }
 }
 EOF
@@ -249,75 +221,8 @@ EOF
     # Iniciar contêineres
     docker compose up -d
 
-    # Instalar e configurar Chatwoot
-    instalar_chatwoot
-
     echo "Tudo instalado e configurado com sucesso!"
 }
 
-# Função para instalar Chatwoot
-function instalar_chatwoot {
-    echo "Instalando Chatwoot..."
-
-    # Instalar dependências
-    apt update && apt upgrade -y
-    apt install -y curl
-    curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-    NODE_MAJOR=20
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
-    apt update
-    apt install -y postgresql postgresql-contrib redis-server nginx nginx-full certbot python3-certbot-nginx nodejs patch ruby-dev zlib1g-dev libvips
-
-    # Configurações adicionais do Chatwoot
-    local secret=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 63 ; echo '')
-    local RAILS_ENV=production
-
-    sudo -i -u chatwoot << EOF
-    rvm install "ruby-3.3.3"
-    rvm use 3.3.3 --default
-    git clone https://github.com/chatwoot/chatwoot.git
-    cd chatwoot
-    git checkout master
-    bundle
-    pnpm i
-    cp .env.example .env
-    sed -i -e "/SECRET_KEY_BASE/ s/=.*/=$secret/" .env
-    sed -i -e '/REDIS_URL/ s/=.*/=redis:\/\/localhost:6379/' .env
-    sed -i -e '/POSTGRES_HOST/ s/=.*/=localhost/' .env
-    sed -i -e '/POSTGRES_USERNAME/ s/=.*/=chatwoot/' .env
-    sed -i -e "/POSTGRES_PASSWORD/ s/=.*/=$pg_pass/" .env
-    sed -i -e '/RAILS_ENV/ s/=.*/=$RAILS_ENV/' .env
-    rake assets:precompile RAILS_ENV=production NODE_OPTIONS="--max-old-space-size=4096 --openssl-legacy-provider"
-EOF
-
-    # Configurar o Email Provider do Chatwoot (SendGrid)
-    sudo -i -u chatwoot << EOF
-    cd chatwoot
-    sed -i -e "/MAILER_SENDER_EMAIL/ s/=.*/=Chatwoot <$EMAIL_CHATWOOT_INPUT>/" .env
-    sed -i -e "/SMTP_DOMAIN/ s/=.*/=$DOMINIO_INPUT/" .env
-    sed -i -e "/SMTP_ADDRESS/ s/=.*/=smtp.sendgrid.net/" .env
-    sed -i -e "/SMTP_PORT/ s/=.*/=587/" .env
-    sed -i -e "/SMTP_AUTHENTICATION/ s/=.*/=plain/" .env
-    sed -i -e "/SMTP_USERNAME/ s/=.*/=apikey/" .env
-    sed -i -e "/SMTP_PASSWORD/ s/=.*/=$SENDGRID_API_KEY_INPUT/" .env
-    sed -i -e "/SMTP_ENABLE_STARTTLS_AUTO/ s/=.*/=true/" .env
-    sed -i -e "/ENABLE_ACCOUNT_SIGNUP/ s/=.*/=true/" .env
-EOF
-
-    # Setup do serviço Chatwoot
-    cp /home/chatwoot/chatwoot/deployment/chatwoot-web.1.service /etc/systemd/system/chatwoot-web.1.service
-    cp /home/chatwoot/chatwoot/deployment/chatwoot-worker.1.service /etc/systemd/system/chatwoot-worker.1.service
-    systemctl enable chatwoot.target
-    systemctl start chatwoot.target
-
-    # Reiniciar Chatwoot após a configuração do email provider
-    sudo systemctl restart chatwoot.target
-
-    echo "Chatwoot instalado e configurado com sucesso!"
-}
-
 # Chamar função
-instalar_sistemas
+instalar_evolution_johnnyzap_typebot
