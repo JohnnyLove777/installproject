@@ -155,13 +155,19 @@ server {
 }
 EOF
 
-    # Configuração para JohnnyDash
+    # Configuração para JohnnyDash na porta 3031
     cat <<EOF > /etc/nginx/sites-available/johnnydash
 server {
     server_name johnnydash.$DOMINIO_INPUT;
     location / {
         proxy_pass http://127.0.0.1:3031;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_cache_bypass \$http_upgrade;
     }
 }
 EOF
@@ -220,7 +226,6 @@ services:
       - SMTP_PASSWORD=$SENHA_APP_GMAIL_INPUT
       - S3_ENDPOINT=https://storage.$DOMINIO_INPUT
       - S3_ACCESS_KEY=minio
-      - S3_SECRET_KEY=min
       - S3_SECRET_KEY=minio123
 
   typebot-viewer:
